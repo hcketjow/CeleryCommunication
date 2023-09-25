@@ -13,9 +13,9 @@ app = Celery('tasks', backend='redis://localhost:6379/0', broker='redis://localh
 @app.on_after_configure.connect
 def setup_periodic_tasks(sender, **kwargs):
     # Schedule the my_task task to run every 5 seconds using Celery beat
-    sender.add_periodic_task(5.0, task_send_to_CRM.s(), name='task_send_to_CRM', expires=10)
-    sender.add_periodic_task(5.0, task_send_to_ISSW.s(), name='task_send_to_ISSW', expires=10)
-def fetch_and_send_data_to_CRM():
+    sender.add_periodic_task(5.0, task_send_to_MariaDB.s(), name='task_send_to_MariaDB', expires=10)
+    sender.add_periodic_task(5.0, task_send_to_sqlite3.s(), name='task_send_to_sqlite3', expires=10)
+def fetch_and_send_data_to_MariaDB():
     # Connection to the sqlite3
     connection = sqlite3.connect('db.sqlite3')
     # Connect to MySQL/MariaDB database
@@ -80,7 +80,7 @@ def fetch_and_send_data_to_CRM():
         except Exception as e:
             print("Error:", e)
 
-def fetch_and_send_data_to_ISSW():
+def fetch_and_send_data_to_sqlite3():
     # Connection to sqlite3
     conn_ISSW = sqlite3.connect('db.sqlite3')
     # Connection to the MySQL database
@@ -91,32 +91,42 @@ def fetch_and_send_data_to_ISSW():
         port=0000,
         database="name_of_database"
     )
+    # Create the cursor for both databases
     cursor_Maria_DB = conn_maria_DB.cursor()
     cursor_ISSW2 = conn_ISSW.cursor()
 
-    sql_query = """SELECT uvk.koresponzbeneficjid, uvk.tematwiado, uvk.treswiad, vp.projectname, CONCAT(vu.first_name, " ", vu.last_name) AS imieinazwisko_CRM
-    FROM u_yf_koresponzbeneficj uvk, vtiger_crmentity vc, vtiger_users vu, vtiger_project vp 
+    # Create SQL query from the 'name_of_the_mariaDB_table'
+    sql_query = """SELECT uvk.id, uvk.name, uvk.surname, vp.projectname, CONCAT(vu.first_name, " ", vu.last_name) AS age_CRM
+    FROM name_of_the_mariaDB_table uvk, table_name_3 vc, table_name_users vu, table_name vp 
     WHERE uvk.koresponzbeneficjid = vc.crmid 
     AND vc.smcreatorid = vu.id 
     AND uvk.projkoresp = vp.projectid"""
 
+    # Execute the 'sql_query'
     cursor_Maria_DB.execute(sql_query)
+    # Fetch all the data from the MariaDB which were set from the 'sql_query'
     rows = cursor_Maria_DB.fetchall()
 
+    # Iterate through all the row in rows from the MariaDB database
     for row in rows:
         koresponzbeneficjid = row[0] 
-        tematwiado = "'" + row[1] + "'"
-        treswiad = "'" + row[2] + "'"
-        data_otrzymania_koresp = "'" + datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S') + "'"
-        projectname = row[3] #JRWA
-        imieinazwisko_CRM = "'" + row[4] + "'"
+        name = "'" + row[1] + "'"
+        surname = "'" + row[2] + "'"
+        get_date_koresp = "'" + datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S') + "'"
+        projectname = row[3]
+        age_CRM = "'" + row[4] + "'"
 
+        # Inserting data to the tables
         try:
-            cursor_ISSW2.execute("INSERT INTO korespondencja_korespondencjapisf (tematwiado, tresc_wiadomosci, JRWA_id, opiekun_PISF, data_otrzymania_korespondencji)" \
-                    f"VALUES ({tematwiado}, {treswiad}, {projectname}, {imieinazwisko_CRM}, {data_otrzymania_koresp});")
+            cursor_ISSW2.execute("INSERT INTO name_of_the_sqlite3_table (name, surname, JRWA_id, get_date_koresp, age_CRM)" \
+                    f"VALUES ({name}, {surname}, {projectname}, {get_date_koresp}, {age_CRM});")
+            # Commit all the exectution of the 'cursor_ISSW2'
             conn_ISSW.commit()
-            cursor_Maria_DB.execute(f"UPDATE u_yf_koresponzbeneficj SET write_issw = 1 WHERE koresponzbeneficjid = {koresponzbeneficjid}")
+            # Create functionality to update the second table
+            cursor_Maria_DB.execute(f"UPDATE name_of_the_mariaDB_table SET write_issw = 1 WHERE koresponzbeneficjid = {koresponzbeneficjid}")
+            # Check number of rows which were added to the other database
             num_rows_added = cursor_Maria_DB.rowcount
+            # If the transfer of the data went properly, then inform me in log_MariaDB.txt
             if num_rows_added == 1:
                 with open("log_MariaDB.txt", "a") as file:
                     result = "Zapisano do ISSW wpis o numerze id: " +str(koresponzbeneficjid)+" "+datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S')
@@ -124,17 +134,24 @@ def fetch_and_send_data_to_ISSW():
         except Exception as e:
             print("Error:", e)
 
+# Create a task for sending data from sqlite3 to MariaDB
 @app.task
-def task_send_to_CRM():
-    print("Rozpoczęto przekazywanie komunikatów do CRM.")
-    data = fetch_and_send_data_to_CRM()
+def task_send_to_MariaDB():
+    # Message to keep track if the data are transfering
+    print("The transfer of messages to the MariaDB has begun.")
+    # Name of the first method
+    data = fetch_and_send_data_to_MariaDB()
     return data
 
+# Create a task for sending data from MariaDB to sqlite3
 @app.task
-def task_send_to_ISSW():
-    print("Rozpoczęto przekazywanie komunikatów do ISSW")
-    data = fetch_and_send_data_to_ISSW()
+def task_send_to_sqlite3():
+    # Message to keep track if the data are transfering
+    print("Message transmission to sqlite3 has begun")
+     # Name of the second method
+    data = fetch_and_send_data_to_sqlite3()
     return data
 
+# Create a worker for transfering the data
 if __name__ == '__main__':
     app.worker_main(argv=['worker', '--beat'])
