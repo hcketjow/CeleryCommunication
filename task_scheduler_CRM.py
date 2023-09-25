@@ -1,4 +1,4 @@
-# Aby monitorować wyniki nalezy uruchomić: 
+# To monitor the results you need to run:
 # 1. celery -A task_scheduler_CRM beat --loglevel=info
 # 2. celery -A task_scheduler_CRM:app worker --loglevel=info
 from celery import Celery
@@ -7,7 +7,7 @@ import mysql.connector
 import sqlite3
 import json
 from datetime import datetime
-# Inicjalizacja Celery
+# Create a celery task on server redis
 app = Celery('tasks', backend='redis://localhost:6379/0', broker='redis://localhost:6379/0')
 
 @app.on_after_configure.connect
@@ -15,11 +15,10 @@ def setup_periodic_tasks(sender, **kwargs):
     # Schedule the my_task task to run every 5 seconds using Celery beat
     sender.add_periodic_task(5.0, task_send_to_CRM.s(), name='task_send_to_CRM', expires=10)
     sender.add_periodic_task(5.0, task_send_to_ISSW.s(), name='task_send_to_ISSW', expires=10)
-#dodawanie JRWA
 def fetch_and_send_data_to_CRM():
-    # Connect to sqlite3 from ISSW 2.0
+    # Connection to the sqlite3
     connection = sqlite3.connect('db.sqlite3')
-    # Connect to the MySQL database
+    # Connect to MySQL/MariaDB database
     conn = mysql.connector.connect(
         user="username",
         password="password",
@@ -27,54 +26,64 @@ def fetch_and_send_data_to_CRM():
         port=0000,
         database="name_of_database"
     )
+    # Cursor to the mysql database
     cursor = conn.cursor()
+     # Cursor to the mysql sqlite
     cursor_ISSW2 = connection.cursor()
     
-    # Choose data which are from the ISSW 2.0 database sqlite3
-    cursor_ISSW2.execute("SELECT id, tematwiado, tresc_wiadomosci, wnioskodawca_id, kierunek_korespondencji, data_wyslania_korespondencji, JRWA FROM korespondencja_korespondencjapisf WHERE write_CRM IS NULL OR write_CRM = 0")
+    # Choose names of the columns you want to execute from sqlite3
+    cursor_ISSW2.execute("SELECT id, name, surname, age, direction_number, middle_name, JRWA FROM name_of_the_sqlite3_table WHERE column_name_CRM IS NULL OR column_name_CRM = 0")
+    # Assign query to the one variable
     rows = cursor_ISSW2.fetchall()
-
+    # Iterate through columns form the 'cursor_ISSW2'
     for row in rows:
         id = row[0] 
-        tytul_wiadomosci = "'" + row[1] + "'"
-        tresc_wiadomosci = "'" + row[2] + "'"
-        imieinazwisko = row[3] 
-        kierunek_korespondencji = row[4]
-        data_wyslania_korespondencji = "'" + row[5] + "'"
-        kierunek = "'Przychodząca'" if kierunek_korespondencji == 0 else "'Wychodząca'"
-        wniosek_JRWA = row[6]
+        name = "'" + row[1] + "'"
+        surname = "'" + row[2] + "'"
+        age = row[3] 
+        direction_number = row[4]
+        middle_name = "'" + row[5] + "'"
+        direction = "'Incoming'" if direction_number == 0 else "'Outgoing'"
+        application_JRWA = row[6]
 
-        cursor.execute(f"SELECT projectid FROM vtiger_project WHERE projectname = '{wniosek_JRWA}';")
+        # Line to execute other tables if it is needed
+        cursor.execute(f"SELECT column_name_1 FROM table_name WHERE projectname = '{application_JRWA}';")
         idcrmidprojektu = cursor.fetchone()[0]
 
-        cursor.execute(f"SELECT linktoaccountscontacts FROM vtiger_project WHERE projectname = '{wniosek_JRWA}';")
+        cursor.execute(f"SELECT column_name_2 FROM table_name WHERE projectname = '{application_JRWA}';")
         idcrmidbeneficjenta = cursor.fetchone()[0]
-        cursor.execute("SELECT @idTabelavtiger_crmentity AS 'id_CRM_entity';")
+        cursor.execute("SELECT @idTabelatable_name_3 AS 'id_CRM_entity';")
         id_CRM_entity = cursor.fetchone()[0]
 
+        #Here we insert the data into the table
         try:
-            #Gdzie 134 jest uzytkownikiem systemowym
-            cursor.execute("INSERT INTO vtiger_crmentity(smcreatorid, smownerid, modifiedby, setype, createdtime, modifiedtime) "
-                        f"VALUES(134, 134, 134, 'Koresponzbeneficj', {data_wyslania_korespondencji}, {data_wyslania_korespondencji});")
-            idTabelavtiger_crmentity = cursor.lastrowid
-        
-            cursor.execute("INSERT INTO u_yf_koresponzbeneficj (koresponzbeneficjid, tematwiado, treswiad, projkoresp, issw_imieinazwisko, issw_kierunek, beneficjent) " \
-                    f"VALUES ({idTabelavtiger_crmentity}, {tytul_wiadomosci}, {tresc_wiadomosci}, {idcrmidprojektu}, {imieinazwisko}, {kierunek}, {idcrmidbeneficjenta});")
+            #Where 134 is system user
+            cursor.execute("INSERT INTO table_name_3(smcreatorid, smownerid, modifiedby, setype, createdtime, modifiedtime) "
+                        f"VALUES(134, 134, 134, 'Koresponzbeneficj', {direction_number}, {direction_number});")
+            idTabelatable_name_3 = cursor.lastrowid
+            # Inserting into MariaDB/MySQL tables
+            cursor.execute("INSERT INTO name_of_the_mariaDB_table (id, names, surnames, projkoresp, age, directions_2, beneficiary) " \
+                    f"VALUES ({idTabelatable_name_3}, {name}, {surname}, {idcrmidprojektu}, {age}, {direction}, {idcrmidbeneficjenta});")
+            # Commiting the insertion
             conn.commit()
-            cursor_ISSW2.execute(f"UPDATE korespondencja_korespondencjapisf SET write_CRM = 1 WHERE id = {id}")
+            # Update values from the table 'name_of_the_sqlite3_table'
+            cursor_ISSW2.execute(f"UPDATE name_of_the_sqlite3_table SET column_name_CRM = 1 WHERE id = {id}")
+            # Commiting the changes
             connection.commit()
+            # Check number of rows which were added to the other database
             num_rows_added = cursor_ISSW2.rowcount
             if num_rows_added == 1:
+                # If the transfer of the data went properly, then inform me in log.txt
                 with open("log.txt", "a") as file:
-                    result = "Zapisano do CRM wpis o numerze id: " +str(id)+" "+datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S')
+                    result = "Saved into CRM entry number id: " +str(id)+" "+datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S')
                     file.write(result + "\n")   
         except Exception as e:
             print("Error:", e)
 
 def fetch_and_send_data_to_ISSW():
-    # Connect to sqlite3 from ISSW 2.0
+    # Connection to sqlite3
     conn_ISSW = sqlite3.connect('db.sqlite3')
-    # # Connect to the MySQL database
+    # Connection to the MySQL database
     conn_maria_DB = mysql.connector.connect(
         user="username",
         password="password",
